@@ -1,0 +1,206 @@
+from google.colab import drive
+drive.mount('/content/drive')
+
+from __future__ import print_function
+from matplotlib import pyplot as plt
+%matplotlib inline
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from scipy import stats
+from IPython.display import display, HTML
+
+from sklearn import metrics
+from sklearn.metrics import classification_report
+from sklearn import preprocessing
+from sklearn.model_selection import train_test_split
+
+import keras
+from keras.models import Sequential
+from keras.layers import Dense, Dropout, Flatten, Reshape
+from keras.layers import Conv2D,Conv1D, MaxPooling1D
+from keras.utils import np_utils
+
+
+# Set some standard parameters upfront
+pd.options.display.float_format = '{:.1f}'.format
+sns.set() # Default seaborn look and feel
+plt.style.use('ggplot')
+print('keras version ', keras.__version__)
+# Same labels will be reused throughout the program
+LABELS = ['downstair',
+          'úpstair',
+          'jogging',
+          'situp',
+          'walkonheel',
+          'walkontoe',
+          'normalwalk']
+# The number of steps within one time segment
+TIME_PERIODS = 80
+# The steps to take from one segment to the next; if this value is equal to
+# TIME_PERIODS, then there is no overlap between the segments
+STEP_DISTANCE = 40
+
+def read_data(file_path):
+
+    df = pd.read_csv (file_path,index_col=False)
+
+    # ... and then this column must be transformed to float explicitly
+    df['ax'] = df['ax'].apply(convert_to_float)
+    df['ay'] = df['ay'].apply(convert_to_float)
+    df['az'] = df['az'].apply(convert_to_float)
+    df['wx'] = df['wx'].apply(convert_to_float)
+    df['wy'] = df['wy'].apply(convert_to_float)
+    df['wz'] = df['wz'].apply(convert_to_float)
+    df['angleX'] = df['angleX'].apply(convert_to_float)
+    df['angleY'] = df['angleY'].apply(convert_to_float)
+    df['angleZ'] = df['angleZ'].apply(convert_to_float)
+    df['temp'] = df['temp'].apply(convert_to_float)
+
+    # This is very important otherwise the model will not fit and loss
+    # will show up as NAN
+    # print(df)
+    df.drop(['wx',
+                    'wy',
+                    'wz',
+                    'angleX',
+                    'angleY',
+                    'angleZ',
+                    'temp'],axis=1,inplace=True)
+    df.dropna(axis=0, how='any', inplace=True)
+    # print(df)
+    return df
+
+def convert_to_float(x):
+
+    try:
+        return np.float(x)
+    except:
+        return np.nan
+
+def show_basic_dataframe_info(dataframe):
+
+    # Shape and how many rows and columns
+    print('Number of columns in the dataframe: %i' % (dataframe.shape[1]))
+    print('Number of rows in the dataframe: %i\n' % (dataframe.shape[0]))
+
+df = read_data(r'drive/My Drive/har data and files/allf.csv')
+
+# Show how many training examples exist for each of the six activities
+df['activity'].value_counts().plot(kind='bar',
+                                   title='Training Examples by Activity Type',color='purple')
+plt.show()
+
+plt.show()
+# Better understand how the recordings are spread across the different
+# users who participated in the study
+df['uid'].value_counts().plot(kind='bar',
+                                  title='User\'s Training Examples',color='purple')
+plt.show()
+
+# Define column name of the label vector
+LABEL = 'ActivityEncoded'
+# Transform the labels from String to Integer via LabelEncoder
+le = preprocessing.LabelEncoder()
+# Add a new column to the existing DataFrame with the encoded values
+df[LABEL] = le.fit_transform(df['activity'].values.ravel())
+
+# Normalize features for training data set (values between 0 and 1)
+# Surpress warning for next 3 operation
+pd.options.mode.chained_assignment = None  # default='warn'
+df['ax'] = df['ax'] / df['ax'].max()
+df['ay'] = df['ay'] / df['ay'].max()
+df['az'] = df['az'] / df['az'].max()
+# print(df_test['ax'])
+# df_test['ax'] = df_test['ax'] / df_test['ax'].max()
+# df_test['ay'] = df_test['ay'] / df_test['ay'].max()
+# df_test['az'] = df_test['az'] / df_test['az'].max()
+# Round numbers
+# print(df_test['ax'])
+# df_train = df_train.round({'ax': 4, 'ay': 4, 'az': 4})
+
+def create_segments_and_labels(df, time_steps, step, label_name):
+
+    # x, y, z acceleration as features
+    N_FEATURES = 3
+    # Number of steps to advance in each iteration (for me, it should always
+    # be equal to the time_steps in order to have no overlap between segments)
+    # step = time_steps
+    segments = []
+    labels = []
+    for i in range(0, len(df) - time_steps, step):
+        xs = df['ax'].values[i: ]
+        ys = df['ay'].values[i: i + time_steps]
+        zs = df['az'].values[i: i + time_steps]
+        # Retrieve the most often used label in this segment
+        label = stats.mode(df[label_name][i: i + time_steps])[0][0]
+        segments.append([xs, ys, zs])
+        labels.append(label)
+
+    # Bring the segments into a better shape
+    reshaped_segments = np.asarray(segments, dtype= np.float32).reshape(-1, time_steps, N_FEATURES)
+    labels = np.asarray(labels)
+
+    return reshaped_segments, labels
+
+x, y = create_segments_and_labels(df,TIME_PERIODS,
+                                              STEP_DISTANCE,
+                                              LABEL)
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size = 0.2)
+
+# print(x_train)
+# print(x_test)
+print(y_test)
+# print(y_train)
+
+# Set input & output dimensions
+n_timesteps=  x_train.shape[1]
+n_features= x_train.shape[2]
+
+num_time_periods, num_sensors = x_train.shape[1], x_train.shape[2]
+num_classes = le.classes_.size
+print(list(le.classes_))
+
+y_train_hot = np_utils.to_categorical(y_train, num_classes)
+print('New y_train shape: ', y_train_hot.shape)
+y_test_hot = np_utils.to_categorical(y_test, num_classes)
+print('New y_test shape: ', y_test_hot.shape)
+n_outputs=y_train_hot.shape[1]
+
+model = Sequential()
+model.add(Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(n_timesteps,n_features)))
+model.add(Conv1D(filters=64, kernel_size=3, activation='relu'))
+model.add(Dropout(0.5))
+model.add(MaxPooling1D(pool_size=2))
+model.add(Conv1D(filters=128, kernel_size=3, activation='relu'))
+model.add(MaxPooling1D(pool_size=2))
+model.add(Flatten())
+model.add(Dense(100, activation='relu'))
+model.add(Dense(n_outputs, activation='softmax'))
+# model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+print(model.summary())
+
+callbacks_list = [
+    keras.callbacks.ModelCheckpoint(
+        filepath='best_model.{epoch:02d}-{val_loss:.2f}.h5',
+        monitor='val_loss', save_best_only=True),
+    keras.callbacks.EarlyStopping(monitor='acc', patience=1)
+]
+
+model.compile(loss='categorical_crossentropy',
+                optimizer='adam', metrics=['accuracy'])
+
+# Hyper-parameters
+BATCH_SIZE = 10
+EPOCHS = 90
+
+# Enable validation to use ModelCheckpoint and EarlyStopping callbacks.
+history = model.fit(x_train,
+                      y_train_hot,
+                      batch_size=BATCH_SIZE,
+                      epochs=EPOCHS,shuffle=True,
+                      callbacks=callbacks_list,
+                      validation_split=0.3,
+                      verbose=1)
+
+
